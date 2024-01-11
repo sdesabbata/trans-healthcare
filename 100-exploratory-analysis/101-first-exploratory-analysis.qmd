@@ -1,0 +1,628 @@
+---
+title: "First exploratory analysis"
+format: 
+  html:
+    embed-resources: true
+    page-layout: full
+    code-fold: true
+    toc: true
+    toc-depth: 4
+---
+
+```{r setup}
+#| warning: false
+#| message: false
+#| include: false
+
+# Setup script
+
+# Libraries
+library(tidyverse)
+library(magrittr)
+library(sf)
+library(mapsf)
+library(classInt)
+
+# Load data
+
+# Load lookup for codes and regions
+lookup <- 
+  read_csv("../storage/OAs_to_LSOAs_to_MSOAs_to_LEP_to_LAD_(May_2022)_Lookup_in_England.csv") %>% 
+  distinct(MSOA21CD, MSOA21NM, LEP21CD1, LEP21NM1, LEP21CD2, LEP21NM2, LAD22CD, LAD22NM)
+
+# Load Gender identity at MSOA level
+ts078_MSOA <-
+  read_csv("../storage/census2021-ts078/census2021-ts078-msoa.csv") %>% 
+  select(-date, -geography) %>% 
+  rename(
+   MSOA21CD = `geography code`
+  ) %>% 
+  # Limit to MSOA in England
+  filter(str_starts(MSOA21CD, "E")) %>% 
+  # Join with lookup data
+  left_join(lookup) %>% 
+  relocate(
+    MSOA21NM, LEP21CD1, LEP21NM1, LEP21CD2, LEP21NM2, LAD22CD, LAD22NM,
+    .after = MSOA21CD
+  )
+
+# Load MSOA geometries
+geom_Leicestershire <-
+  st_read("../storage/Leicestershire_2021_MSOAs.geojson")
+
+# Pre-processing
+ts078_MSOA %<>%
+  # Simplify column names
+  rename(
+    residents_16over       = `Gender identity: Total: All usual residents aged 16 years and over`,
+    gender_cis             = `Gender identity: Gender identity the same as sex registered at birth`,
+    gender_trans_no_spec   = `Gender identity: Gender identity different from sex registered at birth but no specific identity given`,
+    gender_trans_woman     = `Gender identity: Trans woman`,
+    gender_trans_man       = `Gender identity: Trans man`,
+    gender_trans_all_other = `Gender identity: All other gender identities`,
+    gender_no_answer       = `Gender identity: Not answered`
+  ) %>% 
+  # Add category with all trans identities
+  mutate(
+    gender_trans_all =
+      gender_trans_no_spec + gender_trans_woman + gender_trans_man + gender_trans_all_other
+  ) %>% 
+  relocate(
+    gender_trans_all, 
+    .after = gender_cis
+  ) %>% 
+  # Create percentages
+  mutate(
+    across(
+      gender_cis:gender_no_answer, 
+      .names = "perc_{.col}",
+      ~ ( (.x / residents_16over) * 100 )
+    )
+  )
+```
+
+```{r}
+#| warning: false
+#| message: false
+#| include: false
+
+# Load Access to Healthy Assets & Hazards (AHAH) data
+# https://data.cdrc.ac.uk/dataset/access-healthy-assets-hazards-ahah
+ahah <-
+  read_csv("../storage/AHAH_V3_0.csv") %>% 
+  select(lsoa11, ah3gp, ah3hosp, ah3dent, ah3phar, ah3leis, ah3blue, ah3gpas) %>% 
+  rename(LSOA21CD = lsoa11) %>% 
+  left_join(
+    read_csv("../storage/OAs_to_LSOAs_to_MSOAs_to_LEP_to_LAD_(May_2022)_Lookup_in_England.csv") %>% 
+      select(LSOA21CD, MSOA21CD)
+  ) %>% 
+  group_by(MSOA21CD) %>% 
+  summarise(
+    across(
+      starts_with("ah3"),
+      mean
+    )
+  )
+
+# Rural urban classification
+# https://geoportal.statistics.gov.uk/datasets/ons::rural-urban-classification-2011-of-middle-layer-super-output-areas-in-england-and-wales-1/about
+rural_urban <-
+  read_csv("../storage/Rural_Urban_Classification_(2011)_of_Middle_Layer_Super_Output_Areas_in_England_and_Wales.csv")
+
+# MSOA2011 to MSOA2021
+# https://geoportal.statistics.gov.uk/datasets/ons::msoa-2011-to-msoa-2021-to-local-authority-district-2022-lookup-for-england-and-wales-version-2/about
+msoa_2011_2021 <-
+  read_csv("../storage/MSOA_(2011)_to_MSOA_(2021)_to_Local_Authority_District_(2022)_Lookup_for_England_and_Wales_(Version_2).csv")
+```
+
+
+## Gender identity: All trans+ identities
+
+### Maps
+
+```{r}
+#| warning: false
+#| message: false
+
+trans_all_leics_jenks_breaks <-
+  ts078_MSOA %>% 
+  filter(
+    LEP21NM1 == "Leicester and Leicestershire"
+  ) %>% 
+  pull(perc_gender_trans_all) %>% 
+  classIntervals(n = 7, style = "jenks") %$%
+  brks
+
+geom_Leicestershire %>% 
+  left_join(ts078_MSOA) %>% 
+  mf_map(
+    var = "perc_gender_trans_all", 
+    breaks = trans_all_leics_jenks_breaks,
+    type = "choro", 
+    pal = "Viridis", 
+    col_na = NA,
+    leg_title = "Percentage of residents 16yo+",
+    leg_pos = "topleft"
+    #alpha = 0.7, 
+    #border = NA, 
+    #add = TRUE
+    )
+mf_title(txt = "All trans+ identities")
+```
+
+
+```{r}
+#| warning: false
+#| message: false
+
+geom_Leicestershire %>% 
+  left_join(ts078_MSOA) %>% 
+  filter(LAD22NM == "Leicester") %>% 
+  mf_map(
+    var = "perc_gender_trans_all", 
+    breaks = trans_all_leics_jenks_breaks,
+    type = "choro", 
+    pal = "Viridis", 
+    col_na = NA,
+    leg_title = "Percentage of residents 16yo+",
+    leg_pos = "topleft"
+    #alpha = 0.7, 
+    #border = NA, 
+    #add = TRUE
+    )
+mf_title(txt = "All trans+ identities")
+```
+
+### Identities map grids
+
+```{r}
+#| warning: false
+#| message: false
+#| fig-width: 16
+#| fig-height: 12
+
+trans_leics_jenks_breaks <-
+  ts078_MSOA %>% 
+  filter(
+    LEP21NM1 == "Leicester and Leicestershire"
+  ) %>% 
+  select(perc_gender_trans_woman, perc_gender_trans_man, perc_gender_trans_all_other, perc_gender_trans_no_spec) %>% 
+  pivot_longer(cols = everything()) %>% 
+  pull(value) %>% 
+  classIntervals(n = 7, style = "jenks") %$%
+  brks
+
+par(mfrow = c(2, 2))
+
+geom_Leicestershire %>% 
+  left_join(ts078_MSOA) %>% 
+  mf_map(
+    var = "perc_gender_trans_no_spec", 
+    breaks = trans_leics_jenks_breaks,
+    leg_pos = NA,
+    type = "choro", 
+    pal = "Rocket", 
+    col_na = NA
+    #alpha = 0.7, 
+    #border = NA, 
+    #add = TRUE
+    )
+mf_title(txt = "Gender identity different from sex registered at birth but no specific identity given")
+mf_legend(
+  title = "Percentage of residents 16yo+",
+  type = "choro", 
+  pos = "topleft",
+  val = trans_leics_jenks_breaks,
+  pal = "Rocket"
+  )
+
+geom_Leicestershire %>% 
+  left_join(ts078_MSOA) %>% 
+  mf_map(
+    var = "perc_gender_trans_woman", 
+    breaks = trans_leics_jenks_breaks,
+    leg_pos = NA,
+    type = "choro", 
+    pal = "Rocket", 
+    col_na = NA
+    #alpha = 0.7, 
+    #border = NA, 
+    #add = TRUE
+    )
+mf_title(txt = "Trans women")
+
+geom_Leicestershire %>% 
+  left_join(ts078_MSOA) %>% 
+  mf_map(
+    var = "perc_gender_trans_man", 
+    breaks = trans_leics_jenks_breaks,
+    leg_pos = NA,
+    type = "choro", 
+    pal = "Rocket", 
+    col_na = NA
+    #alpha = 0.7, 
+    #border = NA, 
+    #add = TRUE
+    )
+mf_title(txt = "Trans men")
+
+geom_Leicestershire %>% 
+  left_join(ts078_MSOA) %>% 
+  mf_map(
+    var = "perc_gender_trans_all_other", 
+    breaks = trans_leics_jenks_breaks,
+    leg_pos = NA,
+    type = "choro", 
+    pal = "Rocket", 
+    col_na = NA,
+    leg_title = "Percentage of residents 16yo+"
+    #alpha = 0.7, 
+    #border = NA, 
+    #add = TRUE
+    )
+mf_title(txt = "All other gender identities")
+
+#par(mfrow = c(1, 1))
+```
+
+```{r}
+#| warning: false
+#| message: false
+#| fig-width: 16
+#| fig-height: 12
+
+# trans_leic_jenks_breaks <-
+#   ts078_MSOA %>% 
+#   filter(LAD22NM == "Leicester") %>% 
+#   select(perc_gender_trans_woman, perc_gender_trans_man, perc_gender_trans_all_other, perc_gender_trans_no_spec) %>% 
+#   pivot_longer(cols = everything()) %>% 
+#   pull(value) %>% 
+#   classIntervals(n = 7, style = "jenks") %$%
+#   brks
+
+par(mfrow = c(2, 2))
+
+geom_Leicestershire %>% 
+  left_join(ts078_MSOA) %>% 
+  filter(LAD22NM == "Leicester") %>% 
+  mf_map(
+    var = "perc_gender_trans_no_spec", 
+    breaks = trans_leics_jenks_breaks,
+    leg_pos = NA,
+    type = "choro", 
+    pal = "Rocket", 
+    col_na = NA
+    #alpha = 0.7, 
+    #border = NA, 
+    #add = TRUE
+    )
+mf_title(txt = "Gender identity different from sex registered at birth but no specific identity given")
+mf_legend(
+  title = "Percentage of residents 16yo+",
+  type = "choro", 
+  pos = "topleft",
+  val = trans_leics_jenks_breaks,
+  pal = "Rocket"
+  )
+
+geom_Leicestershire %>% 
+  left_join(ts078_MSOA) %>% 
+  filter(LAD22NM == "Leicester") %>% 
+  mf_map(
+    var = "perc_gender_trans_woman", 
+    breaks = trans_leics_jenks_breaks,
+    leg_pos = NA,
+    type = "choro", 
+    pal = "Rocket", 
+    col_na = NA
+    #alpha = 0.7, 
+    #border = NA, 
+    #add = TRUE
+    )
+mf_title(txt = "Trans women")
+
+geom_Leicestershire %>% 
+  left_join(ts078_MSOA) %>% 
+  filter(LAD22NM == "Leicester") %>% 
+  mf_map(
+    var = "perc_gender_trans_man", 
+    breaks = trans_leics_jenks_breaks,
+    leg_pos = NA,
+    type = "choro", 
+    pal = "Rocket", 
+    col_na = NA
+    #alpha = 0.7, 
+    #border = NA, 
+    #add = TRUE
+    )
+mf_title(txt = "Trans men")
+
+geom_Leicestershire %>% 
+  left_join(ts078_MSOA) %>% 
+  filter(LAD22NM == "Leicester") %>% 
+  mf_map(
+    var = "perc_gender_trans_all_other", 
+    breaks = trans_leics_jenks_breaks,
+    leg_pos = NA,
+    type = "choro", 
+    pal = "Rocket", 
+    col_na = NA
+    #alpha = 0.7, 
+    #border = NA, 
+    #add = TRUE
+    )
+mf_title(txt = "All other gender identities")
+
+par(mfrow = c(1, 1))
+```
+
+
+
+### Distributions
+
+```{r}
+#| warning: false
+#| message: false
+#| fig-width: 10
+#| fig-height: 10
+
+ts078_MSOA %>% 
+  mutate(
+    plot_highlight = if_else(
+      LEP21NM1 == "Leicester and Leicestershire",
+      "Leicester and Leicestershire", NA
+    )
+  ) %>% 
+  ggplot(aes(
+    x = perc_gender_trans_all,
+    y = fct_reorder(LEP21NM1, perc_gender_trans_all),
+    fill = plot_highlight
+  )) +
+  geom_boxplot() +
+  ggtitle("Distribution of all trans+ identities") +
+  scale_fill_manual(values = c("#1f77b4"), na.value = "#ffffff") +
+  xlab("Gender identity: All trans+ identities") +
+  ylab("Area (Local Enterprise Partnerships)") +
+  labs(fill = "Area highlight") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+
+```{r}
+#| warning: false
+#| message: false
+#| fig-width: 10
+#| fig-height: 4
+
+ts078_MSOA %>% 
+  filter(
+    LEP21NM1 == "Leicester and Leicestershire"
+  ) %>% 
+  ggplot(aes(
+    x = perc_gender_trans_all,
+    y = fct_reorder(LAD22NM, perc_gender_trans_all)
+  )) +
+  geom_boxplot(fill = "#1f77b4") +
+  ggtitle("Distribution of all trans+ identities") +
+  xlab("Gender identity: All trans+ identities") +
+  ylab("Area (Local Authority Districts)") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+
+```{r}
+#| warning: false
+#| message: false
+#| fig-width: 10
+#| fig-height: 35
+
+ts078_MSOA %>% 
+  mutate(
+    plot_highlight = if_else(
+      LEP21NM1 == "Leicester and Leicestershire",
+      "Leicester and Leicestershire", NA
+    )
+  ) %>% 
+  ggplot(aes(
+    x = perc_gender_trans_all,
+    y = fct_reorder(LAD22NM, perc_gender_trans_all),
+    fill = plot_highlight
+  )) +
+  geom_boxplot() +
+  ggtitle("Distribution of all trans+ identities") +
+  scale_fill_manual(values = c("#1f77b4"), na.value = "#ffffff") +
+  xlab("Gender identity: All trans+ identities") +
+  ylab("Area (Local Authority Districts)") +
+  labs(fill = "Area highlight") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+
+
+## Gender identity: Not answered
+
+### Maps
+
+```{r}
+#| warning: false
+#| message: false
+
+geom_Leicestershire %>% 
+  left_join(ts078_MSOA) %>% 
+  mf_map(
+    var = "perc_gender_no_answer", 
+    breaks = "jenks",
+    nbreaks = 7,
+    type = "choro", 
+    pal = "Grays", 
+    col_na = NA,
+    leg_title = "Percentage of residents 16yo+",
+    leg_pos = "topleft"
+    #alpha = 0.7, 
+    #border = NA, 
+    #add = TRUE
+    )
+mf_title(txt = "Gender identity: Not answered")
+```
+
+
+```{r}
+#| warning: false
+#| message: false
+
+geom_Leicestershire %>% 
+  left_join(ts078_MSOA) %>% 
+  filter(LAD22NM == "Leicester") %>% 
+  mf_map(
+    var = "perc_gender_no_answer", 
+    breaks = "jenks",
+    nbreaks = 7,
+    type = "choro", 
+    pal = "Grays", 
+    col_na = NA,
+    leg_title = "Percentage of residents 16yo+",
+    leg_pos = "topleft"
+    #alpha = 0.7, 
+    #border = NA, 
+    #add = TRUE
+    )
+mf_title(txt = "Gender identity: Not answered")
+```
+
+### Distributions
+
+```{r}
+#| warning: false
+#| message: false
+#| fig-width: 10
+#| fig-height: 10
+
+ts078_MSOA %>% 
+  mutate(
+    plot_highlight = if_else(
+      LEP21NM1 == "Leicester and Leicestershire",
+      "Leicester and Leicestershire", NA
+    )
+  ) %>% 
+  ggplot(aes(
+    x = perc_gender_no_answer,
+    y = fct_reorder(LEP21NM1, perc_gender_no_answer),
+    fill = plot_highlight
+  )) +
+  geom_boxplot() +
+  ggtitle("Distribution of no answer") +
+  scale_fill_manual(values = c("#1f77b4"), na.value = "#ffffff") +
+  xlab("Gender identity: Not answered") +
+  ylab("Area (Local Enterprise Partnerships)") +
+  labs(fill = "Area highlight") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+
+```{r}
+#| warning: false
+#| message: false
+#| fig-width: 10
+#| fig-height: 4
+
+ts078_MSOA %>% 
+  filter(
+    LEP21NM1 == "Leicester and Leicestershire"
+  ) %>% 
+  ggplot(aes(
+    x = perc_gender_no_answer,
+    y = fct_reorder(LAD22NM, perc_gender_no_answer)
+  )) +
+  geom_boxplot(fill = "#1f77b4") +
+  ggtitle("Distribution of no answer") +
+  xlab("Gender identity: Not answered") +
+  ylab("Area (Local Authority Districts)") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+
+```{r}
+#| warning: false
+#| message: false
+#| fig-width: 10
+#| fig-height: 35
+
+ts078_MSOA %>% 
+  mutate(
+    plot_highlight = if_else(
+      LEP21NM1 == "Leicester and Leicestershire",
+      "Leicester and Leicestershire", NA
+    )
+  ) %>% 
+  ggplot(aes(
+    x = perc_gender_no_answer,
+    y = fct_reorder(LAD22NM, perc_gender_no_answer),
+    fill = plot_highlight
+  )) +
+  geom_boxplot() +
+  ggtitle("Distribution of no answer") +
+  scale_fill_manual(values = c("#1f77b4"), na.value = "#ffffff") +
+  xlab("Gender identity: Not answered") +
+  ylab("Area (Local Authority Districts)") +
+  labs(fill = "Area highlight") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+
+## Gender identiry and AHAH
+
+```{r}
+#| warning: false
+#| message: false
+
+ts078_MSOA %>% 
+  left_join(ahah) %>% 
+  ggplot(aes(
+    x = perc_gender_trans_all,
+    y = ah3gp
+  )) +
+  geom_point(size = 0.2) +
+  xlab("All trans+ identities (perc of residents 16+ yo)") +
+  ylab("Access to GP (minutes)") +
+  scale_x_log10() +
+  scale_y_log10() +
+  theme_minimal()
+```
+
+
+## Gender identity and Rural-Urban
+
+```{r}
+#| warning: false
+#| message: false
+
+ts078_MSOA %>%
+  left_join(
+    msoa_2011_2021 %>% 
+      select(MSOA11CD, MSOA21CD)
+  ) %>% 
+  left_join(rural_urban) %>% 
+  mutate(
+    RUC11 = factor(RUC11, levels = c(
+      rural_urban %>% 
+        distinct(RUC11, RUC11CD) %>% 
+        arrange(RUC11CD) %>% 
+        pull(RUC11)
+    ))
+  ) %>% 
+  ggplot(aes(
+    x = perc_gender_trans_all,
+    y = fct_rev(RUC11)
+  )) +
+  geom_boxplot() +
+  xlab("All trans+ identities (perc of residents 16yo+)") +
+  ylab("Rural / Urban classification 2011") +
+  theme_minimal()
+```
+

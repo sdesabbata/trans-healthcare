@@ -1,0 +1,176 @@
+---
+title: "Gender and health"
+format: 
+  html:
+    embed-resources: true
+    page-layout: full
+    code-fold: true
+    toc: true
+    toc-depth: 4
+---
+
+```{r setup}
+#| warning: false
+#| message: false
+#| include: false
+
+# Setup script
+
+# Libraries
+library(nomisr)
+library(tidyverse)
+library(magrittr)
+library(knitr)
+library(sf)
+library(mapsf)
+library(classInt)
+```
+
+```{r}
+#| warning: false
+#| message: false
+
+# gender_search <- nomis_search(name = "*gender*")
+# gender_search
+
+# gender_search %>% 
+#   filter(name.value == "RM038 - Gender identity by ethnic group") %>% 
+#   pull(id)
+
+# nomis_get_metadata("NM_2138_1", "measures")
+# nomis_get_metadata("NM_2138_1", "geography", "TYPE")
+
+gender_ethnic_lad <-
+  nomis_get_data(
+    id = "NM_2138_1", 
+    time = "latest", 
+    geography = "TYPE424"
+  )
+gender_ethnic_lac <-
+  nomis_get_data(
+    id = "NM_2138_1", 
+    time = "latest", 
+    geography = "TYPE423"
+  )
+gender_ethnic_lep <-
+  nomis_get_data(
+    id = "NM_2138_1", 
+    time = "latest", 
+    geography = "TYPE459"
+  )
+
+```
+
+```{r}
+#| warning: false
+#| message: false
+
+lookup <- 
+  read_csv("../storage/OAs_to_LSOAs_to_MSOAs_to_LEP_to_LAD_(May_2022)_Lookup_in_England.csv") %>% 
+  distinct(MSOA21CD, MSOA21NM, LEP21CD1, LEP21NM1, LEP21CD2, LEP21NM2, LAD22CD, LAD22NM)
+
+leicestershire_lads <-
+  lookup %>% 
+  filter(LEP21NM1 == "Leicester and Leicestershire") %>%
+  pull(LAD22NM) %>% 
+  unique()
+```
+
+```{r}
+#| warning: false
+#| message: false
+
+gender_ethnic_lad %>% 
+  select(
+    GEOGRAPHY_NAME, GEOGRAPHY_CODE,
+    C2021_ETH_8_NAME, C2021_GENDERID_4_NAME,
+    OBS_VALUE
+  ) %>% 
+  pivot_wider(
+    id_cols = c(GEOGRAPHY_NAME, GEOGRAPHY_CODE, C2021_ETH_8_NAME),
+    names_from = C2021_GENDERID_4_NAME,
+    values_from = OBS_VALUE
+  ) %>% 
+  rename(
+    trans_all = `Gender identity different from sex registered at birth`
+  ) %>% 
+  mutate(
+    perc_trans_all = (trans_all / `Total`) * 100
+  ) %>%
+  filter(C2021_ETH_8_NAME != "Total") %>% 
+  filter(GEOGRAPHY_NAME == "Leicester") %>% 
+  select(GEOGRAPHY_NAME, C2021_ETH_8_NAME, perc_trans_all, trans_all, `Total`) %>% 
+  arrange(-perc_trans_all) %>% 
+  kable()
+```
+
+```{r}
+#| warning: false
+#| message: false
+
+gender_ethnic_lad %>% 
+  filter(GEOGRAPHY_NAME != "Isles of Scilly") %>% 
+  select(
+    GEOGRAPHY_NAME, GEOGRAPHY_CODE,
+    C2021_ETH_8_NAME, C2021_GENDERID_4_NAME,
+    OBS_VALUE
+  ) %>% 
+  filter(C2021_ETH_8_NAME != "Total") %>% 
+  pivot_wider(
+    id_cols = c(GEOGRAPHY_NAME, GEOGRAPHY_CODE, C2021_ETH_8_NAME),
+    names_from = C2021_GENDERID_4_NAME,
+    values_from = OBS_VALUE
+  ) %>% 
+  mutate(
+    perc_trans_all = (`Gender identity different from sex registered at birth` / `Total`) * 100
+  ) %>%
+  ggplot(aes(
+    x = perc_trans_all,
+    y = fct_reorder(C2021_ETH_8_NAME, perc_trans_all)
+  )) +
+  geom_boxplot() +
+  xlab("Percentage of residents 16yo+") +
+  ylab("Ethnic group") +
+  theme_minimal()
+```
+
+```{r}
+#| warning: false
+#| message: false
+#| fig-width: 10
+#| fig-height: 35
+
+gender_ethnic_lad %>% 
+  filter(GEOGRAPHY_NAME != "Isles of Scilly") %>% 
+  select(
+    GEOGRAPHY_NAME, GEOGRAPHY_CODE,
+    C2021_ETH_8_NAME, C2021_GENDERID_4_NAME,
+    OBS_VALUE
+  ) %>% 
+  filter(C2021_ETH_8_NAME != "Total") %>% 
+  pivot_wider(
+    id_cols = c(GEOGRAPHY_NAME, GEOGRAPHY_CODE, C2021_ETH_8_NAME),
+    names_from = C2021_GENDERID_4_NAME,
+    values_from = OBS_VALUE
+  ) %>% 
+  mutate(
+    perc_trans_all = (`Gender identity different from sex registered at birth` / `Total`) * 100
+  ) %>% 
+  mutate(
+    plot_highlight = if_else(
+      GEOGRAPHY_NAME == "Leicester",
+      "Leicester", NA
+    )
+  ) %>% #View()
+  ggplot(aes(
+    x = perc_trans_all,
+    y = fct_reorder(GEOGRAPHY_NAME, perc_trans_all, .fun = sd),
+    fill = plot_highlight
+  )) +
+  geom_boxplot() +
+  scale_fill_manual(values = c("#1f77b4"), na.value = "#ffffff") +
+  xlab("Percentage of residents 16yo+") +
+  ylab("Local Authority District") +
+  labs(fill = "Area highlight") +
+  theme_minimal()
+```

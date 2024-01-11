@@ -1,0 +1,340 @@
+---
+title: "Gender and health"
+format: 
+  html:
+    embed-resources: true
+    page-layout: full
+    code-fold: true
+    toc: true
+    toc-depth: 4
+---
+
+```{r setup}
+#| warning: false
+#| message: false
+#| include: false
+
+# Setup script
+
+# Libraries
+library(nomisr)
+library(tidyverse)
+library(magrittr)
+library(knitr)
+library(sf)
+library(mapsf)
+library(classInt)
+```
+
+```{r}
+#| warning: false
+#| message: false
+
+lookup <- 
+  read_csv("../storage/OAs_to_LSOAs_to_MSOAs_to_LEP_to_LAD_(May_2022)_Lookup_in_England.csv") %>% 
+  distinct(MSOA21CD, MSOA21NM, LEP21CD1, LEP21NM1, LEP21CD2, LEP21NM2, LAD22CD, LAD22NM)
+
+leicestershire_lads <-
+  lookup %>% 
+  filter(LEP21NM1 == "Leicester and Leicestershire") %>%
+  pull(LAD22NM) %>% 
+  unique()
+```
+
+
+```{r}
+#| warning: false
+#| message: false
+
+# gender_search <- nomis_search(name = "*gender*")
+# gender_search
+
+# gender_search %>%
+#   filter(name.value == "RM039 - Gender identity by general health") %>%
+#   pull(id)
+
+# nomis_get_metadata("NM_2137_1", "measures")
+# nomis_get_metadata("NM_2137_1", "geography", "TYPE")
+
+gender_health_lad <-
+  nomis_get_data(
+    id = "NM_2139_1", 
+    time = "latest", 
+    geography = "TYPE424"
+  )
+gender_health_lac <-
+  nomis_get_data(
+    id = "NM_2139_1", 
+    time = "latest", 
+    geography = "TYPE423"
+  )
+gender_health_lep <-
+  nomis_get_data(
+    id = "NM_2139_1", 
+    time = "latest", 
+    geography = "TYPE459"
+  )
+```
+
+```{r}
+#| warning: false
+#| message: false
+
+gender_health_lad_leic <-
+  gender_health_lad %>% 
+  filter(GEOGRAPHY_NAME == "Leicester") %>%
+  mutate(
+    C2021_HEALTH_7_NAME = fct_reorder(C2021_HEALTH_7_NAME, C2021_HEALTH_7)
+  ) %>% 
+  mutate(
+    C2021_GENDERID_7_NAME = case_when(
+      C2021_GENDERID_7_NAME == "Gender identity the same as sex registered at birth" ~ "Cisgender",
+      C2021_GENDERID_7_NAME == "Gender identity different from sex registered at birth but no specific identity given" ~ "Trans (no specific id.)",
+      TRUE ~ C2021_GENDERID_7_NAME
+    )
+  )
+
+gender_sort_by_health <-
+  gender_health_lad_leic %>% 
+  select(C2021_GENDERID_7_NAME, C2021_HEALTH_7_NAME, OBS_VALUE) %>% 
+  pivot_wider(
+    id_cols = C2021_GENDERID_7_NAME,
+    names_from = C2021_HEALTH_7_NAME,
+    values_from = OBS_VALUE
+  ) %>% 
+  mutate(
+    health_good_plus = ((`Good health` + `Very good health`) / Total) * 100
+  ) %>% 
+  arrange(health_good_plus) %>% 
+  pull(C2021_GENDERID_7_NAME)
+
+
+# gender_health_lad_leic_plot <-
+gender_health_lad_leic %>% 
+  filter(C2021_HEALTH_7_NAME != "Total") %>% 
+  filter(C2021_GENDERID_7_NAME %in% c(
+    "All other gender identities", "Trans woman",
+    "Trans man", "Trans (no specific id.)"    
+  )) %>% 
+  ggplot(aes(
+    x = OBS_VALUE,
+    y = factor(C2021_GENDERID_7_NAME, levels=gender_sort_by_health),
+    fill = C2021_HEALTH_7_NAME
+  )) +
+  geom_bar(position="stack", stat="identity") +
+  scale_fill_viridis_d(option = "A", direction = -1) +
+  xlab("Residents 16yo+") +
+  ylab("Gender identity") +
+  labs(fill = "Health") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+# gender_health_lad_leic_plot_perc <-
+gender_health_lad_leic %>% 
+  filter(C2021_HEALTH_7_NAME != "Total") %>% 
+  ggplot(aes(
+    x = OBS_VALUE,
+    y = factor(C2021_GENDERID_7_NAME, levels=gender_sort_by_health),
+    fill = C2021_HEALTH_7_NAME
+  )) +
+  geom_bar(position="fill", stat="identity") +
+  scale_fill_viridis_d(option = "A", direction = -1) +
+  xlab("Percentage of residents 16yo+") +
+  ylab("Gender identity") +
+  labs(fill = "Health") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+# gender_health_lad_leic_plot_flip <-
+gender_health_lad_leic %>% 
+  filter(C2021_HEALTH_7_NAME != "Total") %>% 
+  filter(C2021_GENDERID_7_NAME %in% c(
+    "All other gender identities", "Trans woman",
+    "Trans man", "Trans (no specific id.)"    
+  )) %>% 
+  ggplot(aes(
+    x = OBS_VALUE,
+    y = fct_rev(C2021_HEALTH_7_NAME),
+    fill = factor(C2021_GENDERID_7_NAME, levels=gender_sort_by_health)
+  )) +
+  geom_bar(position="stack", stat="identity") +
+  scale_fill_brewer(palette = "Set1") +
+  xlab("Residents 16yo+") +
+  ylab("Health") +
+  labs(fill = "Gender identity") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+```{r}
+#| warning: false
+#| message: false
+
+gender_health_lad_leics <-
+  gender_health_lad %>% 
+  filter(GEOGRAPHY_NAME %in% leicestershire_lads) %>%
+  mutate(
+    C2021_HEALTH_7_NAME = fct_reorder(C2021_HEALTH_7_NAME, C2021_HEALTH_7)
+  ) %>% 
+  mutate(
+    C2021_GENDERID_7_NAME = case_when(
+      C2021_GENDERID_7_NAME == "Gender identity the same as sex registered at birth" ~ "Cisgender",
+      C2021_GENDERID_7_NAME == "Gender identity different from sex registered at birth but no specific identity given" ~ "Trans (no specific id.)",
+      TRUE ~ C2021_GENDERID_7_NAME
+    )
+  )
+
+gender_health_lad_leics_aggr <-
+  gender_health_lad_leics %>% 
+  select(C2021_GENDERID_7_NAME, C2021_HEALTH_7_NAME, OBS_VALUE) %>% 
+  group_by(C2021_GENDERID_7_NAME, C2021_HEALTH_7_NAME) %>% 
+  summarise(OBS_VALUE = sum(OBS_VALUE)) %>% 
+  ungroup() 
+
+gender_sort_by_health_leics <-
+  gender_health_lad_leics_aggr %>% 
+  pivot_wider(
+    id_cols = C2021_GENDERID_7_NAME,
+    names_from = C2021_HEALTH_7_NAME,
+    values_from = OBS_VALUE
+  ) %>% 
+  mutate(
+    health_good_plus = ((`Good health` + `Very good health`) / Total) * 100
+  ) %>% 
+  arrange(health_good_plus) %>% 
+  pull(C2021_GENDERID_7_NAME)
+
+
+# gender_health_lad_leic_plot <-
+gender_health_lad_leics_aggr %>% 
+  filter(C2021_HEALTH_7_NAME != "Total") %>% 
+  filter(C2021_GENDERID_7_NAME %in% c(
+    "All other gender identities", "Trans woman",
+    "Trans man", "Trans (no specific id.)"    
+  )) %>% 
+  ggplot(aes(
+    x = OBS_VALUE,
+    y = factor(C2021_GENDERID_7_NAME, levels=gender_sort_by_health_leics),
+    fill = C2021_HEALTH_7_NAME
+  )) +
+  geom_bar(position="stack", stat="identity") +
+  scale_fill_viridis_d(option = "A", direction = -1) +
+  xlab("Residents 16yo+") +
+  ylab("Gender identity") +
+  labs(fill = "Health") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+# gender_health_lad_leic_plot_perc <-
+gender_health_lad_leics_aggr %>% 
+  filter(C2021_HEALTH_7_NAME != "Total") %>% 
+  ggplot(aes(
+    x = OBS_VALUE,
+    y = factor(C2021_GENDERID_7_NAME, levels=gender_sort_by_health_leics),
+    fill = C2021_HEALTH_7_NAME
+  )) +
+  geom_bar(position="fill", stat="identity") +
+  scale_fill_viridis_d(option = "A", direction = -1) +
+  xlab("Percentage of residents 16yo+") +
+  ylab("Gender identity") +
+  labs(fill = "Health") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+# gender_health_lad_leic_plot_flip <-
+gender_health_lad_leics_aggr %>% 
+  filter(C2021_HEALTH_7_NAME != "Total") %>% 
+  filter(C2021_GENDERID_7_NAME %in% c(
+    "All other gender identities", "Trans woman",
+    "Trans man", "Trans (no specific id.)"    
+  )) %>% 
+  ggplot(aes(
+    x = OBS_VALUE,
+    y = fct_rev(C2021_HEALTH_7_NAME),
+    fill = factor(C2021_GENDERID_7_NAME, levels=gender_sort_by_health_leics)
+  )) +
+  geom_bar(position="stack", stat="identity") +
+  scale_fill_brewer(palette = "Set1") +
+  xlab("Residents 16yo+") +
+  ylab("Health") +
+  labs(fill = "Gender identity") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+
+```{r}
+#| warning: false
+#| message: false
+
+gender_health_lad_wide_gender <-
+  gender_health_lad %>% 
+  select(
+    GEOGRAPHY_NAME, GEOGRAPHY_CODE,
+    C2021_HEALTH_7, C2021_HEALTH_7_NAME, C2021_GENDERID_7_NAME,
+    OBS_VALUE
+  ) %>% 
+  pivot_wider(
+    id_cols = c(GEOGRAPHY_NAME, GEOGRAPHY_CODE, C2021_HEALTH_7, C2021_HEALTH_7_NAME),
+    names_from = C2021_GENDERID_7_NAME,
+    values_from = OBS_VALUE
+  ) %>% 
+  # Simplify column names
+  rename(
+    residents_16over       = `Total`,
+    gender_cis             = `Gender identity the same as sex registered at birth`,
+    gender_trans_no_spec   = `Gender identity different from sex registered at birth but no specific identity given`,
+    gender_trans_woman     = `Trans woman`,
+    gender_trans_man       = `Trans man`,
+    gender_trans_all_other = `All other gender identities`,
+    gender_no_answer       = `Not answered`
+  ) %>% 
+  # Add category with all trans identities
+  mutate(
+    gender_trans_all =
+      gender_trans_no_spec + gender_trans_woman + gender_trans_man + gender_trans_all_other
+  ) %>% 
+  # Add category with all trans identities
+  mutate(
+    gender_trans_all =
+      gender_trans_no_spec + gender_trans_woman + gender_trans_man + gender_trans_all_other
+  ) %>% 
+  relocate(
+    gender_trans_all, 
+    .after = gender_cis
+  ) %>% 
+  # Create percentages
+  mutate(
+    across(
+      gender_cis:gender_no_answer, 
+      .names = "perc_{.col}",
+      ~ ( (.x / residents_16over) * 100 )
+    )
+  )
+```
+
+```{r}
+#| warning: false
+#| message: false
+
+gender_health_lad_wide_gender %>% 
+  filter(C2021_HEALTH_7_NAME != "Total") %>% 
+  filter(GEOGRAPHY_NAME == "Leicester") %>% 
+  select(GEOGRAPHY_NAME, C2021_HEALTH_7, C2021_HEALTH_7_NAME, perc_gender_trans_all, gender_trans_all, residents_16over) %>% 
+  arrange(C2021_HEALTH_7) %>% 
+  kable()
+```
+
+```{r}
+#| warning: false
+#| message: false
+
+gender_health_lad_wide_gender %>%
+  filter(C2021_HEALTH_7_NAME != "Total") %>% 
+  ggplot(aes(
+    x = perc_gender_trans_all,
+    y = fct_reorder(C2021_HEALTH_7_NAME, perc_gender_trans_all)
+  )) +
+  geom_boxplot()
+```
+
