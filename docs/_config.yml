@@ -1,0 +1,6 @@
+title: Trans healthcare
+logo: images/logo-map-trans.png
+show_downloads: true
+theme: jekyll-theme-minimal
+plugins:
+  - jemoji
